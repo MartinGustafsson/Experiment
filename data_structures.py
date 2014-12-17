@@ -5,12 +5,154 @@ from chaco.api import ArrayPlotData, Plot, GridDataSource, ImageData
 from enable.component_editor import ComponentEditor
 import h5py
 import numpy as np
+import uuid
 array = np.array
 from bottleneck import anynan
 
 
 class DataError(Exception):
     pass
+    
+class DataX(HasTraits):
+    # Rewritten and simplified
+    description = String('')
+    uuid = String()
+    
+    values = Array()
+    unit = String()
+    label = String()
+    
+    def __init__(self, x, label = '', unit = '', description = ''):
+        self.uuid = uuid.uuid4().hex
+        self.description = description
+        if isinstance(x, DataX):
+            self.values = x.values.copy()
+            self.label = x.label
+            self.unit = x.unit
+        elif isinstance(x, np.ndarray):
+            self.values = x
+        elif isinstance(x, int):
+            self.values = np.empty(x)
+            self.values[:] = np.nan
+        if label:
+            self.label = label
+        if unit:
+            self.unit = unit
+
+    def write_h5(self, h5_base):
+        dset = h5_base.create_dataset(self.uuid, data=self.values)
+        dset.attrs["unit"] = self.unit
+        dset.attrs["label"] = self.label
+        dset.attrs["description"] = self.description
+        dset.attrs["uuid"] = self.uuid
+
+class DataXYZ(HasTraits):
+    # Rewritten and simplified. Does not contain the x- and y-arrays
+    description = String('')
+    uuid = String()
+    
+    x = Instance(DataX)
+    y = Instance(DataX)
+    values = Array()
+    label = String('z')
+    unit = String('')
+    
+    full = Bool(False)
+    index = Int(0)
+    changed = Event()
+    
+    def __init__(self, x, y, label = '', unit = '', description = ''):
+        self.uuid = uuid.uuid4().hex
+        self.label = label
+        self.description = description
+        self.unit = unit
+
+        self.x = x
+        self.y = y
+        
+        self.values = np.empty(len(x.values),len(y.values))
+        self.values[:] = np.nan
+    
+    def add_line(self, newline, x=None):
+        if self.full:
+            raise DataError('The data container is already full')
+        self.index = self.index + 1
+        if isinstance(newline, DataX):
+            self.values[:,self.index] = newline.values
+        elif isinstance(newline, np.ndarray):
+            self.values[:,self.index] = newline
+        elif isinstance(newline, DataXY):
+            self.values[:,self.index] = newline.values
+        else:
+            raise DataError('Unsupported data')
+        if x is not None:
+            self.x.value[self.idx] = x
+        if self.idx >= self.values.shape[0]-1:
+            self.full = True
+        self.changed = True
+    
+    def write_h5(self, h5_base):        
+        dset = h5_base.create_dataset(self.uuid, data=self.values)
+        dset.attrs["label"] = self.label            
+        dset.attrs["unit"] = self.unit
+        dset.attrs["description"] = self.description
+        dset.attrs["uuid"] = self.uuid
+        dset.attrs["x"] = self.x.uuid
+        dset.attrs["y"] = self.y.uuid
+        dset.attrs["class"] = self.__class__.__name__
+        
+class DataXYZ(HasTraits):
+    # Rewritten and simplified
+    name = String('datamap')
+    description = String('')
+    uuid = String()
+    
+    x_values = Array()
+    y_values = Array()
+    z_values = Array()
+    x_label = String('x')
+    y_label = String('y')
+    z_label = String('z')
+    x_unit = String()
+    y_unit = String()
+    z_unit = String()
+    
+    def __init__(self, x, y, label = '', unit = '', description = ''):
+        self.uuid = uuid.uuid4().hex
+        self.description = description
+        if isinstance(x, DataX):
+            self.x_values = x.values
+            self.x_label = x.label
+            self.x_unit = x.unit
+            x = len(self.x_values)
+        if isinstance(y, DataX):
+            self.y_values = y.values
+            self.y_label = y.label
+            self.y_unit = y.unit
+            y = len(self.y_values)
+        self.z_label = label
+        self.z_unit = unit
+        self.z_values = np.empty((x,y))
+        self.z_values[:] = np.nan
+    
+    def write_h5(self, h5_base):
+        x_dset = h5_base.create_dataset(self.uuid + "_x", data=self.x_values)
+        x_dset.attrs[unit] = self.x_unit
+        y_dset = h5_base.create_dataset(self.uuid + "_y", data=self.y_values)
+        y_dset.attrs[unit] = self.y_unit
+        
+        z_dset = h5_base.create_dataset(self.name, data=self.z_values)
+        z_dset.attrs["label"] = self.z_label            
+        z_dset.attrs["unit"] = self.z_unit
+        z_dset.attrs["description"] = self.description
+        z_dset.attrs["uuid"] = self.uuid
+        
+        z_dset.dims.create_scale(x_dset, self.uuid + "_x")
+        z_dset.dims[0].attach_scale(x_dset)
+        z_dset.dims.create_scale(y_dset, self.uuid + "_y")
+        z_dset.dims[1].attach_scale(y_dset)    
+        
+        
 class DataContainer(HasTraits):
     name = String()
     desc = String('')
